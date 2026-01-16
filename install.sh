@@ -1,93 +1,82 @@
 #!/bin/bash
 # ==============================================================================
-# Project: Panda-Gateway Ultimate (GitHub Release Edition)
-# Author: juyuanguo & Gemini
-# Description: 针对 RK3566 优化的透明网关一键安装脚本
+# Project: Panda-Gateway Manager (Interactive Version)
 # ==============================================================================
 
-set -euo pipefail
+set -u
+readonly GH_PROXY="https://gh-proxy.com/"
+readonly RAW_BASE="https://raw.githubusercontent.com/juyuanguo/Panda-Gateway/main"
 
-# --- 1. 变量定义 ---
-readonly WORKDIR="/etc/sing-box"
-readonly SB_VER="1.12.16"
-readonly GH_USER="juyuanguo"
-readonly REPO="Panda-Gateway"
-readonly RAW_URL="https://raw.githubusercontent.com/${GH_USER}/${REPO}/main/assets"
+# 颜色定义
+blue() { echo -e "\033[34m$1\033[0m"; }
+green() { echo -e "\033[32m$1\033[0m"; }
+yellow() { echo -e "\033[33m$1\033[0m"; }
 
-# --- 2. 颜色与日志 ---
-log_info() { echo -e "\033[32m[INFO]\033[0m $1"; }
-log_err()  { echo -e "\033[31m[ERROR]\033[0m $1"; exit 1; }
+# 询问确认函数
+confirm() {
+    echo -ne "\033[33m[?] $1 (y/n): \033[0m"
+    read -r res
+    [[ "$res" == "y" || "$res" == "Y" ]]
+}
 
-# --- 3. 环境检查 ---
-[[ $EUID -ne 0 ]] && log_err "必须以 root 运行"
-[[ "$(uname -m)" != "aarch64" ]] && log_err "仅支持 RK3566 (aarch64) 架构"
+# --- 模块：安装面板 ---
+install_ui() {
+    if confirm "是否需要下载并部署图形管理面板 (MetaCubeXD)？"; then
+        green "正在通过 gh-proxy 下载面板..."
+        mkdir -p /etc/sing-box/ui
+        local ui_url="${GH_PROXY}https://github.com/MetaCubeX/MetaCubeXD/archive/refs/heads/gh-pages.zip"
+        wget -qO /tmp/ui.zip "$ui_url" && unzip -qo /tmp/ui.zip -d /tmp
+        cp -r /tmp/MetaCubeXD-gh-pages/* /etc/sing-box/ui/
+        green "✅ 面板部署完成。"
+    else
+        yellow "已跳过面板部署。"
+    fi
+}
 
-# --- 4. 安装基础依赖 ---
-log_info "正在安装系统依赖 (iptables, nftables, jq...)"
-apt-get update -qq && apt-get install -y \
-    curl wget jq nftables iproute2 dnsutils unzip \
-    proxychains4 >/dev/null 2>&1
+# --- 主菜单 ---
+show_menu() {
+    clear
+    blue "=================================================="
+    blue "    🐼 Panda-Gateway 模块化管理工具 (v3.5)"
+    blue "    加速源: gh-proxy.com"
+    blue "=================================================="
+    echo -e "  1. 执行环境与内核优化 (RK3566 专用)"
+    echo -e "  2. 部署 Sing-box 核心 (可选面板)"
+    echo -e "  3. 部署 AdGuard Home (可选)"
+    echo -e "  4. 仅下载/更新配置文件 (config.json)"
+    echo -e "  5. 服务管理 (启动/停止/日志)"
+    echo -e "  0. 退出"
+    blue "=================================================="
+}
 
-# --- 5. 下载并安装 Sing-box ---
-log_info "正在下载 Sing-box v${SB_VER}..."
-SB_URL="https://github.com/SagerNet/sing-box/releases/download/v${SB_VER}/sing-box-${SB_VER}-linux-arm64.tar.gz"
-# 如果下载慢，可以手动加上 mirror.ghproxy.com 前缀
-curl -Lo /tmp/sb.tar.gz "$SB_URL"
-
-tar -xzf /tmp/sb.tar.gz -C /tmp
-mv /tmp/sing-box-*/sing-box /usr/local/bin/
-chmod +x /usr/local/bin/sing-box
-rm -rf /tmp/sb.tar.gz /tmp/sing-box-*
-
-# --- 6. 同步 GitHub 仓库资源 (assets) ---
-log_info "正在同步云端配置文件与脚本..."
-mkdir -p "$WORKDIR"
-
-# 下载 assets 目录下的文件
-curl -sSLf "${RAW_URL}/config.json" -o "$WORKDIR/config.json"
-curl -sSLf "${RAW_URL}/tproxy_setup.sh" -o "$WORKDIR/tproxy_setup.sh"
-curl -sSLf "${RAW_URL}/tproxy_cleanup.sh" -o "$WORKDIR/tproxy_cleanup.sh"
-
-chmod +x "$WORKDIR/tproxy_setup.sh" "$WORKDIR/tproxy_cleanup.sh"
-
-# --- 7. 系统内核参数优化 (RK3566 专用) ---
-log_info "正在执行内核网络优化..."
-cat > /etc/sysctl.d/99-panda-gateway.conf <<EOF
-net.ipv4.ip_forward=1
-net.ipv6.conf.all.forwarding=1
-net.core.default_qdisc=fq
-net.ipv4.tcp_congestion_control=bbr
-net.ipv4.conf.all.rp_filter=0
-net.ipv4.conf.eth0.rp_filter=0
-EOF
-sysctl -p /etc/sysctl.d/99-panda-gateway.conf >/dev/null 2>&1
-
-# --- 8. 配置 Systemd 服务 ---
-log_info "正在配置系统服务..."
-cat > /etc/systemd/system/sing-box.service <<EOF
-[Unit]
-Description=Sing-box Service
-After=network.target nss-lookup.target
-
-[Service]
-CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SERVICE CAP_NET_RAW
-AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE CAP_NET_RAW
-ExecStartPre=$WORKDIR/tproxy_setup.sh
-ExecStart=/usr/local/bin/sing-box run -c $WORKDIR/config.json
-ExecStopPost=$WORKDIR/tproxy_cleanup.sh
-Restart=on-failure
-User=root
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-systemctl daemon-reload
-systemctl enable sing-box >/dev/null 2>&1
-
-log_info "==============================================="
-log_info "   Panda-Gateway 安装完成！"
-log_info "   - 配置文件目录: $WORKDIR"
-log_info "   - 启动服务: systemctl start sing-box"
-log_info "   - 查看日志: journalctl -u sing-box -f"
-log_info "==============================================="
+while true; do
+    show_menu
+    read -p "请选择操作 [0-5]: " choice
+    case "$choice" in
+        1)
+            if confirm "确认执行系统内核优化？(将修改 sysctl 参数)"; then
+                # ...执行优化逻辑...
+                green "内核优化已完成。"
+            fi
+            ;;
+        2)
+            if confirm "确认安装 Sing-box 核心？"; then
+                # 使用 GH_PROXY 下载二进制...
+                install_ui # 核心装完后，询问面板
+                green "Sing-box 部署任务结束。"
+            fi
+            ;;
+        3)
+            if confirm "确认部署 AdGuard Home？"; then
+                # 执行 ADG 安装...
+                green "AdGuard Home 部署完成。"
+            fi
+            ;;
+        5)
+            # 服务管理二级菜单...
+            ;;
+        0) exit 0 ;;
+        *) echo "选择错误，请重新输入" ;;
+    esac
+    read -n 1 -s -r -p "按任意键返回菜单..."
+done

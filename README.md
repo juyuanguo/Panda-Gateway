@@ -17,4 +17,4 @@
 wget -qO- [https://raw.githubusercontent.com/juyuanguo/Panda-Gateway/main/install.sh](https://raw.githubusercontent.com/juyuanguo/Panda-Gateway/main/install.sh) | sudo bash
 
 # 如果 GitHub 访问缓慢，请使用代理：
-proxychains4 wget -qO- [https://raw.githubusercontent.com/juyuanguo/Panda-Gateway/main/install.sh](https://raw.githubusercontent.com/juyuanguo/Panda-Gateway/main/install.sh) | sudo bash
+wget -qO- https://gh-proxy.com/https://raw.githubusercontent.com/juyuanguo/Panda-Gateway/main/install.sh | sudo bash
