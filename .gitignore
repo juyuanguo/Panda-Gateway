@@ -1,0 +1,5 @@
+# 忽略运行产生的数据库和日志
+cache.db*
+*.log
+bin/
+rule_set/*.srs
