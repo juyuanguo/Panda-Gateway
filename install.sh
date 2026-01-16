@@ -1,82 +1,87 @@
 #!/bin/bash
 # ==============================================================================
-# Project: Panda-Gateway Manager (Interactive Version)
+# Project: Panda-Gateway Manager (Pure NFTables Edition)
+# Version: 4.1.0
 # ==============================================================================
 
 set -u
 readonly GH_PROXY="https://gh-proxy.com/"
-readonly RAW_BASE="https://raw.githubusercontent.com/juyuanguo/Panda-Gateway/main"
+readonly WORKDIR="/etc/sing-box"
+readonly ASSETS_URL="https://raw.githubusercontent.com/juyuanguo/Panda-Gateway/main/assets"
 
-# 颜色定义
+# 颜色函数
 blue() { echo -e "\033[34m$1\033[0m"; }
 green() { echo -e "\033[32m$1\033[0m"; }
 yellow() { echo -e "\033[33m$1\033[0m"; }
+red() { echo -e "\033[31m$1\033[0m"; }
 
-# 询问确认函数
 confirm() {
     echo -ne "\033[33m[?] $1 (y/n): \033[0m"
     read -r res
     [[ "$res" == "y" || "$res" == "Y" ]]
 }
 
-# --- 模块：安装面板 ---
-install_ui() {
-    if confirm "是否需要下载并部署图形管理面板 (MetaCubeXD)？"; then
-        green "正在通过 gh-proxy 下载面板..."
-        mkdir -p /etc/sing-box/ui
-        local ui_url="${GH_PROXY}https://github.com/MetaCubeX/MetaCubeXD/archive/refs/heads/gh-pages.zip"
-        wget -qO /tmp/ui.zip "$ui_url" && unzip -qo /tmp/ui.zip -d /tmp
-        cp -r /tmp/MetaCubeXD-gh-pages/* /etc/sing-box/ui/
-        green "✅ 面板部署完成。"
-    else
-        yellow "已跳过面板部署。"
+# --- 1. 卸载 iptables (根据用户需求) ---
+task_remove_iptables() {
+    if confirm "是否彻底卸载旧版 iptables (改用纯 nftables 架构)？"; then
+        green "正在卸载 iptables 相关组件..."
+        apt-get purge -y iptables ebtables arptables >/dev/null 2>&1
+        apt-get autoremove -y >/dev/null 2>&1
+        green "✅ iptables 已移除。"
+    fi
+}
+
+# --- 2. 部署独立网络脚本 ---
+task_network_scripts() {
+    if confirm "是否下载独立的网络规则脚本 (tproxy_setup.sh)？"; then
+        mkdir -p "$WORKDIR"
+        green "正在同步 TProxy 规则脚本..."
+        # 从你的仓库下载你刚才贴出的那个 nft 脚本
+        if wget -qO "$WORKDIR/tproxy_setup.sh" "${GH_PROXY}${ASSETS_URL}/tproxy_setup.sh"; then
+            chmod +x "$WORKDIR/tproxy_setup.sh"
+            green "✅ 脚本已存至 $WORKDIR/tproxy_setup.sh，方便您手动调试。"
+        else
+            red "❌ 下载失败，请检查 assets 目录是否存在该文件。"
+        fi
+    fi
+}
+
+# --- 3. 环境与依赖 (纯 NFT) ---
+task_deps() {
+    if confirm "是否安装必要依赖 (nftables, jq, unzip)？"; then
+        green "正在安装现代网络组件..."
+        apt-get update -qq && apt-get install -y nftables iproute2 jq unzip curl >/dev/null 2>&1
+        green "✅ 依赖安装完成。"
     fi
 }
 
 # --- 主菜单 ---
 show_menu() {
     clear
-    blue "=================================================="
-    blue "    🐼 Panda-Gateway 模块化管理工具 (v3.5)"
-    blue "    加速源: gh-proxy.com"
-    blue "=================================================="
-    echo -e "  1. 执行环境与内核优化 (RK3566 专用)"
-    echo -e "  2. 部署 Sing-box 核心 (可选面板)"
-    echo -e "  3. 部署 AdGuard Home (可选)"
-    echo -e "  4. 仅下载/更新配置文件 (config.json)"
-    echo -e "  5. 服务管理 (启动/停止/日志)"
-    echo -e "  0. 退出"
-    blue "=================================================="
+    blue "=============================================="
+    blue "    🐼 Panda-Gateway 管理系统 (纯 NFT 版)"
+    blue "=============================================="
+    echo "  1. 彻底卸载旧版 iptables"
+    echo "  2. 安装系统依赖 (仅 nftables)"
+    echo "  3. 下载/更新独立网络脚本 (tproxy_setup.sh)"
+    echo "  4. 部署 Sing-box 核心与面板"
+    echo "  5. 立即应用网络规则 (运行 tproxy_setup.sh)"
+    echo "  0. 退出"
+    blue "=============================================="
 }
 
 while true; do
     show_menu
-    read -p "请选择操作 [0-5]: " choice
+    read -p "选择: " choice
     case "$choice" in
-        1)
-            if confirm "确认执行系统内核优化？(将修改 sysctl 参数)"; then
-                # ...执行优化逻辑...
-                green "内核优化已完成。"
-            fi
-            ;;
-        2)
-            if confirm "确认安装 Sing-box 核心？"; then
-                # 使用 GH_PROXY 下载二进制...
-                install_ui # 核心装完后，询问面板
-                green "Sing-box 部署任务结束。"
-            fi
-            ;;
-        3)
-            if confirm "确认部署 AdGuard Home？"; then
-                # 执行 ADG 安装...
-                green "AdGuard Home 部署完成。"
-            fi
-            ;;
-        5)
-            # 服务管理二级菜单...
-            ;;
+        1) task_remove_iptables ;;
+        2) task_deps ;;
+        3) task_network_scripts ;;
+        4) # 之前的 Sing-box 下载逻辑... ;;
+        5) if confirm "确定要立即应用 nftables 转发规则吗？"; then
+               bash "$WORKDIR/tproxy_setup.sh" && green "✅ 规则已生效。"
+           fi ;;
         0) exit 0 ;;
-        *) echo "选择错误，请重新输入" ;;
     esac
     read -n 1 -s -r -p "按任意键返回菜单..."
 done
